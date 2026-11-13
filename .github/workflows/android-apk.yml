@@ -20,9 +20,40 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Extract project
+      - name: Extract project and patch compatibility issues
         run: |
           unzip -o LuckPatchUltimate-Source-GitHub-Actions-1.zip
+          python3 - <<'PY'
+          from pathlib import Path
+
+          project = Path("luckpatch-ultimate")
+          files = list(project.rglob("MainActivity.java")) if project.exists() else []
+          if not files:
+              raise SystemExit("MainActivity.java não foi encontrado após extrair o projeto")
+
+          for java_file in files:
+              source = java_file.read_text(encoding="utf-8")
+              source = source.replace("ai.usesCleartextTraffic", "((ai.flags & 0x08000000) != 0)")
+              source = source.replace("c.permission", "permissionOf(c)")
+
+              if "private static String permissionOf(" not in source:
+                  insert_at = source.rfind("}")
+                  if insert_at < 0:
+                      raise SystemExit(f"Classe Java inválida: {java_file}")
+                  helper = """
+              private static String permissionOf(android.content.pm.ComponentInfo component) {
+                  try {
+                      return (String) component.getClass().getField("permission").get(component);
+                  } catch (ReflectiveOperationException ignored) {
+                      return null;
+                  }
+              }
+          """
+                  source = source[:insert_at] + helper + source[insert_at:]
+
+              java_file.write_text(source, encoding="utf-8")
+              print(f"Compatibilidade aplicada em {java_file}")
+          PY
           cd luckpatch-ultimate
           gradle assembleDebug
 
